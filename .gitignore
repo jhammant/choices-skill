@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .DS_Store
 *-workspace/
+
+# closecode: keep private session state out of this public repo
+STATE.md
+.sessions/
