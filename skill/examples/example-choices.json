@@ -1,0 +1,155 @@
+{
+  "title": "Example: data-platform launch choices",
+  "intro": "An example page showing every content type and mode. Pick one per question, tick or rank where asked, and leave notes.",
+  "mode": "team",
+  "deadline": "Friday",
+  "sections": [
+    {
+      "key": "hero",
+      "title": "Docs homepage hero",
+      "intro": "What a first-time visitor sees above the fold.",
+      "groups": [
+        {
+          "key": "layout",
+          "title": "Hero layout",
+          "mode": "one",
+          "options": [
+            {
+              "value": "A",
+              "name": "Search-first",
+              "blurb": "A big search box and popular guides. What we have today.",
+              "current": true,
+              "pros": ["Fast for returning users"],
+              "cons": ["Says nothing about the product"],
+              "content": {"type": "svg", "body": "<svg viewBox=\"0 0 320 200\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"320\" height=\"200\" fill=\"#F7F8FA\"/><rect x=\"20\" y=\"16\" width=\"80\" height=\"10\" rx=\"3\" fill=\"#C9CED8\"/><rect x=\"60\" y=\"60\" width=\"200\" height=\"28\" rx=\"14\" fill=\"#fff\" stroke=\"#9AA3B2\" stroke-width=\"2\"/><circle cx=\"78\" cy=\"74\" r=\"6\" fill=\"none\" stroke=\"#9AA3B2\" stroke-width=\"2\"/><g fill=\"#DDE1E8\"><rect x=\"30\" y=\"120\" width=\"80\" height=\"56\" rx=\"6\"/><rect x=\"120\" y=\"120\" width=\"80\" height=\"56\" rx=\"6\"/><rect x=\"210\" y=\"120\" width=\"80\" height=\"56\" rx=\"6\"/></g></svg>"}
+            },
+            {
+              "value": "B",
+              "name": "Code-first",
+              "blurb": "A live query and its result side by side.",
+              "pros": ["Shows the product in 5 seconds"],
+              "cons": ["Can intimidate non-engineers"],
+              "content": {"type": "svg", "body": "<svg viewBox=\"0 0 320 200\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"320\" height=\"200\" fill=\"#F7F8FA\"/><rect x=\"20\" y=\"16\" width=\"80\" height=\"10\" rx=\"3\" fill=\"#C9CED8\"/><rect x=\"20\" y=\"40\" width=\"170\" height=\"14\" rx=\"3\" fill=\"#16181D\"/><rect x=\"20\" y=\"60\" width=\"120\" height=\"8\" rx=\"3\" fill=\"#9AA3B2\"/><rect x=\"20\" y=\"86\" width=\"136\" height=\"96\" rx=\"8\" fill=\"#0F1115\"/><g fill=\"#7AA2FF\"><rect x=\"32\" y=\"100\" width=\"70\" height=\"6\" rx=\"2\"/><rect x=\"32\" y=\"114\" width=\"100\" height=\"6\" rx=\"2\"/></g><rect x=\"32\" y=\"128\" width=\"84\" height=\"6\" rx=\"2\" fill=\"#43D394\"/><rect x=\"168\" y=\"86\" width=\"132\" height=\"96\" rx=\"8\" fill=\"#fff\" stroke=\"#C9CED8\" stroke-width=\"2\"/><g fill=\"#DDE1E8\"><rect x=\"180\" y=\"100\" width=\"108\" height=\"10\"/><rect x=\"180\" y=\"116\" width=\"108\" height=\"10\"/><rect x=\"180\" y=\"132\" width=\"108\" height=\"10\"/></g></svg>"}
+            },
+            {
+              "value": "C",
+              "name": "Story-led",
+              "blurb": "One outcome headline and a 3-step how-it-works strip.",
+              "pros": ["Lands with buyers and execs"],
+              "cons": ["Engineers scroll past it"],
+              "content": {"type": "svg", "body": "<svg viewBox=\"0 0 320 200\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"320\" height=\"200\" fill=\"#F7F8FA\"/><rect x=\"60\" y=\"34\" width=\"200\" height=\"18\" rx=\"4\" fill=\"#16181D\"/><rect x=\"90\" y=\"60\" width=\"140\" height=\"8\" rx=\"3\" fill=\"#9AA3B2\"/><rect x=\"128\" y=\"78\" width=\"64\" height=\"18\" rx=\"9\" fill=\"#2457D6\"/><g fill=\"#fff\" stroke=\"#C9CED8\" stroke-width=\"2\"><rect x=\"30\" y=\"122\" width=\"76\" height=\"52\" rx=\"8\"/><rect x=\"122\" y=\"122\" width=\"76\" height=\"52\" rx=\"8\"/><rect x=\"214\" y=\"122\" width=\"76\" height=\"52\" rx=\"8\"/></g><g fill=\"#2457D6\"><circle cx=\"46\" cy=\"138\" r=\"7\"/><circle cx=\"138\" cy=\"138\" r=\"7\"/><circle cx=\"230\" cy=\"138\" r=\"7\"/></g></svg>"}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "ingest",
+      "title": "Webhook ingestion",
+      "intro": "How partner webhooks reach the pipeline.",
+      "groups": [
+        {
+          "key": "arch",
+          "title": "Architecture",
+          "mode": "one",
+          "options": [
+            {
+              "value": "A",
+              "name": "Direct to service",
+              "blurb": "The API writes straight to the pipeline service.",
+              "current": true,
+              "pros": ["Nothing new to run"],
+              "cons": ["Bursts drop events"],
+              "content": {"type": "mermaid", "body": "flowchart LR\n  P[Partner] --> API[Webhook API] --> S[Pipeline service] --> DB[(Store)]"}
+            },
+            {
+              "value": "B",
+              "name": "Queue buffer",
+              "blurb": "Put a managed queue between the API and the service.",
+              "pros": ["Absorbs bursts", "Retries for free"],
+              "cons": ["One more thing to operate"],
+              "content": {"type": "mermaid", "body": "flowchart LR\n  P[Partner] --> API[Webhook API] --> Q[[Queue]] --> S[Pipeline service] --> DB[(Store)]"}
+            },
+            {
+              "value": "C",
+              "name": "Event bus",
+              "blurb": "Fan out to several consumers via an event bus.",
+              "pros": ["New consumers without touching the API"],
+              "cons": ["Most moving parts", "Harder to debug"],
+              "content": {"type": "mermaid", "body": "flowchart LR\n  P[Partner] --> API[Webhook API] --> B{{Event bus}}\n  B --> S[Pipeline] --> DB[(Store)]\n  B --> A[Audit log]\n  B --> N[Notifier]"}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "message",
+      "title": "Launch message",
+      "groups": [
+        {
+          "key": "line",
+          "title": "One-line positioning",
+          "mode": "one",
+          "options": [
+            {"value": "A", "name": "What it is", "content": {"type": "text", "body": "A semantic layer that connects your APIs, databases and streams without glue code."}},
+            {"value": "B", "name": "Why it matters", "content": {"type": "text", "body": "Ship integrations in days, not quarters, and stop rewriting them when schemas change."}},
+            {"value": "C", "name": "Provocative", "content": {"type": "text", "body": "Integration code is technical debt you write on purpose. Stop writing it."}}
+          ]
+        },
+        {
+          "key": "post",
+          "title": "Launch post opening",
+          "mode": "one",
+          "minWidth": 320,
+          "options": [
+            {"value": "A", "name": "Story", "content": {"type": "markdown", "body": "Last year we rewrote the **same integration three times**.\n\nThis is what we built so nobody has to do that again."}},
+            {"value": "B", "name": "Numbers", "content": {"type": "markdown", "body": "- [N] integrations\n- [N] weeks saved\n- **0** lines of glue code\n\nHere's how."}}
+          ]
+        }
+      ]
+    },
+    {
+      "key": "api",
+      "title": "SDK call shape",
+      "groups": [
+        {
+          "key": "shape",
+          "title": "How a developer queries",
+          "mode": "one",
+          "options": [
+            {"value": "A", "name": "Query string", "pros": ["Copy-paste from docs"], "cons": ["No type checking"], "content": {"type": "code", "lang": "ts", "body": "const res = await client.query(`\n  find { Order[] } as { id total }\n`)"}},
+            {"value": "B", "name": "Builder", "pros": ["Fully typed"], "cons": ["Verbose"], "content": {"type": "code", "lang": "ts", "body": "const res = await client\n  .find(Order)\n  .select('id', 'total')\n  .run()"}}
+          ]
+        }
+      ]
+    },
+    {
+      "key": "plan",
+      "title": "Next quarter",
+      "groups": [
+        {
+          "key": "rank",
+          "title": "Rank these by priority",
+          "mode": "rank",
+          "options": [
+            {"value": "sso", "name": "SSO", "blurb": "Unblocks two enterprise deals"},
+            {"value": "perf", "name": "Query performance", "blurb": "p95 under 200 ms"},
+            {"value": "docs", "name": "Docs revamp", "blurb": "The hero above, plus guides"},
+            {"value": "conn", "name": "New connectors", "blurb": "Kafka and Snowflake"}
+          ]
+        },
+        {
+          "key": "channels",
+          "title": "Launch channels to use",
+          "mode": "many",
+          "options": [
+            {"value": "blog", "name": "Blog post"},
+            {"value": "li", "name": "LinkedIn"},
+            {"value": "hn", "name": "Hacker News"},
+            {"value": "webinar", "name": "Webinar"}
+          ]
+        }
+      ]
+    }
+  ]
+}
