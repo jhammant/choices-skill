@@ -286,7 +286,8 @@ body.show-tally .tally { display: block; }
     local: META.mode === "public"
       ? "When you’re done, press “Copy my choices” at the bottom and send them to " + (META.owner || "the person who shared this") + "."
       : "Choices can’t be saved on this screen. Use “Copy my choices” at the bottom and send them over.",
-    noid: "You’re viewing results only: sign in with your work account to vote.",
+    noid: META.hosted ? "You’re viewing results only. To vote, use the personal link " + (META.owner || "the organiser") + " sent you."
+      : "You’re viewing results only: sign in with your work account to vote.",
     error: "That didn’t save. Click it again, or copy your choices at the bottom."
   };
   function setStatus(mode) { var el = $("#status"); el.dataset.mode = mode; el.textContent = STATUS[mode]; }

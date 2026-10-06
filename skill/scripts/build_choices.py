@@ -310,6 +310,7 @@ def build(inputs, out, invite_url=None):
     print(f"wrote {out}: {len(sections)} sections, {groups} questions, {options} options, {Path(out).stat().st_size // 1024} KB")
     if meta["invite"]:
         print("\n--- invite message ---\n" + meta["invite"] + "\n----------------------")
+    return head, meta
 
 
 def screenshot(page, png):

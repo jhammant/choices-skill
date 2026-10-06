@@ -1,6 +1,6 @@
 ---
 name: choices
-description: Show 2–4 genuinely different options for a decision side by side, publish them as a tap-to-pick page where the decider (or a whole team, with live vote tallies and per-option comments) chooses, share it with their people (invite message, Slack post, email drafts), then read the picks and comments back and turn them into a decision record and build spec. Use whenever the user types /choices or /choice, says "choices" or "a choice page", says "show me options", "give me a few versions/directions", "mock up some alternatives", "which approach should we take", "help me decide between", "let the team vote", "get sign-off on a direction", or is about to settle a design, architecture, positioning/messaging, naming, pricing, deck-storyline, roadmap or tone question that would be easier to judge by seeing alternatives, even if they never say "choices".
+description: Show 2–4 genuinely different options for a decision side by side, publish them as a tap-to-pick page where the decider (or a whole team, with live vote tallies and per-option comments) chooses, share it with their people (invite message, Slack post, email drafts), then read the picks and comments back and turn them into a decision record and build spec. Use whenever the user types /choices or /choice, says "choices" or "a choice page", says "show me options", "give me a few versions/directions", "mock up some alternatives", "which approach should we take", "help me decide between", "let the team vote", "get sign-off on a direction", or is about to settle a design, architecture, positioning/messaging, naming, pricing, deck-storyline, roadmap or tone question that would be easier to judge by seeing alternatives, even if they never say "choices". It can also host the page on choices.hammantlabs.com for voters outside claude.ai, with a Discord alert whenever someone opens it or votes.
 ---
 
 # /choices: options, picker, decision
@@ -76,6 +76,25 @@ message. View `check.png` once and fix anything clearly broken (clipped art, unr
   Publish with `capabilities: {"comments": {"composer_only": true}}` (no db, so it can be shared outside the org;
   this comments form keeps it shareable). Each person presses "Copy my choices" and sends the text back, or leaves
   comments, and you tally the pasted replies.
+
+- **People outside claude.ai who should vote live (clients, family, partners), or whenever Jon wants a ping as
+  people use it:** host it on `choices.hammantlabs.com` instead of publishing an artifact. Same page; the votes, tallies
+  and notes go to the page's own small server, and **Jon gets a Discord alert when someone opens it, votes, changes
+  their vote (at most every 30 min each) and when everyone invited has voted.**
+  ```bash
+  python3 "$SKILL_DIR/scripts/hosted.py" build choices.json [section-*.json] --slug <short-name> [--open]
+  hlsite deploy ~/hammantlabs-sites-work/choices/<slug>       # slug gets a random suffix, so the URL isn't guessable
+  python3 "$SKILL_DIR/scripts/hosted.py" invite <slug> "Anna" "Ben Smith"   # one personal link each
+  ```
+  - **Invite-only by default.** Only personal links vote; anyone else with the URL sees results only. `--open` lets
+    anyone with the URL vote after typing a name (rate-limited). Comments stay a claude.ai feature; voters use the notes.
+  - **Hand Jon the share kit:** the personal links (`hosted.py links <slug>`) plus a short message for each. Send
+    nothing without his "send". Treat the owner link (printed at build) like a password: it can invite and close.
+  - **Read the picks:** `hosted.py status <slug>` (who opened, who voted), then `hosted.py votes <slug> <out_dir>` and
+    `tally.py <out_dir> choices.json`. Ballots are named by voter, so there are no ids to resolve. `hosted.py close
+    <slug>` locks voting. Tokens and links live only in `~/.config/choices/hosted/` (0600).
+  - **Unlisted is not private:** don't host anything confidential (pricing, people decisions, unannounced deals)
+    this way. Those stay claude.ai team pages.
 
 `comments` (composer-only) puts a **Comment on A** link under every option and section. It opens claude.ai's own
 comment box pinned to that card, so remarks like "B, but with the strip from C" attach to the option they're about.
