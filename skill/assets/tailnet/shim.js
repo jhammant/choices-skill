@@ -2,8 +2,14 @@
    own /state/<key> endpoint (a file on Jon's Mac, reachable only on his tailnet), so Claude reads them from disk.
    The picker code is unchanged.
 
-   Saves merge per question: what this page changed since its last save wins, and everything else keeps the
-   server's copy (picks made on another device, items Claude moved to Done, sections this build doesn't show).
+   Saves merge per question: only what was tapped or typed on this page since its last save is written, and
+   everything else keeps the server's copy (picks made on another device or by voice, items Claude moved to Done,
+   sections this build doesn't show). "Changed on this page" is tracked from the page's own change/input events,
+   so a stale value the page is still showing can never overwrite a newer one saved elsewhere.
+
+   Every page also re-reads /state every 20 s while visible (and whenever it becomes visible again), so a pick saved
+   by voice or another device shows up without a reload. The picker adopts it unless a save is pending or a text box
+   has focus; then it adopts it on the next refresh.
 
    Live pages (CHOICES_TAILNET.live) also stream updates: version.json is polled every 20 s and whenever the page
    becomes visible. A new version shows a small banner ("N new items: tap to load"). The page reloads by itself only
@@ -14,15 +20,23 @@
   var URL_ = "/state/" + CFG.key;
   var VOTER = CFG.voter || "jon";
   var KNOWN = CFG.groups || null;  // { sectionKey: [groupKey, ...] } in this build of the page
-  var latest = { votes: {}, closed: false }, base = {}, voteSubs = [], stateSubs = [];
+  var latest = { votes: {}, closed: false }, voteSubs = [], stateSubs = [];
   var chain = Promise.resolve(), pending = 0;
+  var dirty = {};          // "picks|<s>|<g>", "comments|<s>|<g>", "note|<s>" changed on this page, not yet saved
+  var shownJSON = "", busyAtEmit = false;
 
   function clone(x) { return x === undefined ? undefined : JSON.parse(JSON.stringify(x)); }
   function same(a, b) { return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b); }
   function unavailable(why) { var e = new Error("save failed (" + why + ")"); e.code = "unavailable"; return e; }
-  function mine(state) { var v = ((state && state.votes) || {})[VOTER]; return clone((v && v.sections) || {}); }
 
+  function pickerBusy() {
+    // The picker ignores a snapshot for its own ballot while its save timer runs or a note/comment box has focus.
+    var st = document.getElementById("status"), a = document.activeElement;
+    return pending > 0 || (st && st.dataset.mode === "saving") || !!(a && a.dataset && (a.dataset.note || a.dataset.gcS));
+  }
   function emit() {
+    shownJSON = JSON.stringify(latest);
+    busyAtEmit = pickerBusy();
     var snap = { docs: Object.keys(latest.votes).map(function (id) {
       return { id: id, data: function () { return { sections: latest.votes[id].sections }; } };
     }) };
@@ -39,52 +53,86 @@
   }
   function load() {
     return fetchState().then(function (j) {
-      if (j && j.votes) { latest = j; base = mine(j); }
+      if (j && j.votes) latest = j;
       emit();
     }, function () { emit(); });
   }
-  function merge(server, page) {
+  // What this page changed, from its own events (capture phase, so it runs before the picker's handlers).
+  function markDirty(e) {
+    var t = e.target, d = t && t.dataset;
+    if (!d) return;
+    if (e.type === "change" && d.s && d.g) dirty["picks|" + d.s + "|" + d.g] = true;
+    else if (e.type === "input" && d.gcS && d.gcG) dirty["comments|" + d.gcS + "|" + d.gcG] = true;
+    else if (e.type === "input" && d.note) dirty["note|" + d.note] = true;
+  }
+  document.addEventListener("change", markDirty, true);
+  document.addEventListener("input", markDirty, true);
+
+  function merge(server, page, changed) {
     if (!KNOWN) return clone(page);
     var out = clone(server) || {};
     Object.keys(KNOWN).forEach(function (sk) {
-      var b = base[sk] || {}, p = page[sk] || {};
+      var p = page[sk] || {};
       var o = out[sk] || (out[sk] = {});
       o.picks = o.picks || {};
       o.comments = o.comments || {};
       KNOWN[sk].forEach(function (gk) {
         ["picks", "comments"].forEach(function (f) {
-          var bv = (b[f] || {})[gk], pv = (p[f] || {})[gk];
-          if (same(bv, pv)) return;
+          var pv = (p[f] || {})[gk];
+          // Only what was tapped or typed here since the last save (a later tap still wins over a voice pick).
+          if (!changed[f + "|" + sk + "|" + gk] || same(o[f][gk], pv)) return;
           if (pv === undefined || pv === "") delete o[f][gk]; else o[f][gk] = clone(pv);
         });
       });
-      if (!same(b.note || "", p.note || "")) o.note = p.note || "";
+      if (changed["note|" + sk]) o.note = p.note || "";
       if (typeof o.note !== "string") o.note = "";
     });
     return out;
   }
   function save(pageSections) {
+    var changed = dirty;   // this save carries everything changed so far; later edits go in the next one
+    dirty = {};
     pending++;
     var run = chain.then(function () {
       return fetchState().then(function (server) {
         if (server.closed) { var e = new Error("closed"); e.code = "closed"; throw e; }
         server.votes = server.votes || {};
-        var merged = merge(((server.votes[VOTER] || {}).sections) || {}, pageSections);
+        var merged = merge(((server.votes[VOTER] || {}).sections) || {}, pageSections, changed);
         server.votes[VOTER] = { sections: merged, at: new Date().toISOString() };
         return fetch(URL_, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(server) })
           .then(function (r) {
             if (!r.ok) throw unavailable(r.status);
-            base = clone(pageSections);
             latest = server;
           });
       });
     });
-    chain = run.catch(function () {});
+    chain = run.catch(function () {
+      Object.keys(changed).forEach(function (k) { dirty[k] = true; });  // retry carries them again
+    });
     return run.then(function () { if (--pending === 0) emit(); }, function (e) {
       pending--;
       throw (e && e.code) ? e : unavailable("network");
     });
   }
+  // Re-read the server's copy so picks saved elsewhere (voice, another device) appear without a reload.
+  var refreshing = false;
+  function refresh() {
+    if (refreshing || pending > 0 || document.visibilityState === "hidden") return;
+    refreshing = true;
+    fetchState().then(function (j) {
+      refreshing = false;
+      if (!j || !j.votes || pending > 0) return;
+      var changedOnServer = JSON.stringify(j) !== shownJSON;
+      if (!changedOnServer && !busyAtEmit) return;
+      if (pickerBusy()) { busyAtEmit = true; return; }  // try again next tick; the picker would ignore it now
+      latest = j;
+      emit();
+    }, function () { refreshing = false; });
+  }
+  setInterval(refresh, 20000);
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") refresh(); });
+  window.addEventListener("focus", refresh);
+  window.addEventListener("pageshow", function (e) { if (e.persisted) refresh(); });
   var ready = load();
 
   var db = {

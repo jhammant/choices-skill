@@ -14,6 +14,15 @@ Live pages (one per workspace; the default for Jon) stream new items to an open 
   tailnet.py list <slug> [--all] [--server orbital]        # open groups and their pick status
   tailnet.py rebuild <slug> [--server orbital]             # re-render from the sources (e.g. after a template change)
 
+Reading and answering without the page (the voice front end, other sessions):
+
+  tailnet.py show <slug> [<groupKey>] [--brief] [--json] [--all] [--server orbital]
+      # the open questions: title, options with pros and cons, current pick and comment (one question with a key)
+  tailnet.py pick <slug> <groupKey> <value>[,<value>...] [--comment "..."] [--voter jon] [--dry-run] [--json]
+      # validate against the question's options and mode (one / many / rank, rank in order) and save it like a tap
+      # on the page: merged into the saved state per question, never touching other questions or voters.
+      # Value "-" keeps the current pick and only sets the comment; --comment "" clears the comment.
+
 A live page keeps its sources in <root>/choices/<slug>/src/ (00-top.json plus one file per added section file),
 its bookkeeping in live.json (who added each group, what's resolved) and a version counter in version.json, which
 the open page polls to show "N new items: tap to load". Saved picks survive every rebuild: they're keyed by section
@@ -43,7 +52,7 @@ import re
 import secrets
 import shutil
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -571,6 +580,208 @@ def cmd_rebuild(a):
     print(f"rebuilt {a.slug} (version {n}) {page_url(srv, a.slug)}")
 
 
+# ---------------------------------------------------------------- show / pick (no page needed)
+
+def questions(srv: dict, slug: str, *, voter: str = "jon", include_done: bool = False) -> dict:
+    """Every question on a live page, in page order, with its options and the voter's current answer.
+
+    {"slug", "url", "ws", "open": n, "done": n, "questions": [{"key", "title", "subtitle", "section",
+     "section_title", "mode", "owner", "done", "done_note", "options": [{"value", "name", "blurb", "pros", "cons",
+     "current", "content"}], "pick", "pick_name", "comment"}]}"""
+    d = page_dir(srv, slug)
+    manifest = load_manifest(d)
+    resolved = manifest["resolved"]
+    mine = ballots(read_json(state_file(srv, slug)) or {}, manifest).get(voter, {"groups": {}})["groups"]
+    out = []
+    for f in source_files(d / "src"):
+        for s in load_doc(f).get("sections", []):
+            for g in s.get("groups", []):
+                k = g["key"]
+                if k not in manifest["groups"] or (k in resolved and not include_done):
+                    continue
+                row = mine.get(k) or {}
+                names = {str(o["value"]): o.get("name", str(o["value"])) for o in g.get("options", [])}
+                pick = row.get("pick")
+                vals = pick if isinstance(pick, list) else ([] if pick in (None, "") else [pick])
+                out.append({
+                    "key": k, "title": g.get("title", k), "subtitle": g.get("subtitle", ""),
+                    "section": s["key"], "section_title": s.get("title", ""), "mode": g.get("mode", "one"),
+                    "owner": manifest["groups"][k].get("owner", ""), "done": k in resolved,
+                    "done_note": (resolved.get(k) or {}).get("note", ""),
+                    "options": [{"value": str(o["value"]), "name": o.get("name", str(o["value"])),
+                                 "blurb": o.get("blurb", ""), "pros": list(o.get("pros") or []),
+                                 "cons": list(o.get("cons") or []), "current": bool(o.get("current")),
+                                 "content": (o.get("content") or {}).get("type", "")}
+                                for o in g.get("options", [])],
+                    "pick": pick, "pick_name": [names.get(str(v), "") for v in vals],
+                    "comment": row.get("comment", "") or ""})
+    out.sort(key=lambda q: q["done"])  # open first, page order kept within each (sort is stable)
+    return {"slug": slug, "url": page_url(srv, slug), "ws": manifest.get("ws", srv["ws"]),
+            "open": len(manifest["groups"]) - len(resolved), "done": len(resolved), "questions": out}
+
+
+def question_text(q: dict, *, brief: bool = False) -> str:
+    mode = {"one": "pick one", "many": "pick any", "rank": "rank in order"}.get(q["mode"], q["mode"])
+    head = f"{q['key']}: {q['title']}  ({mode})"
+    if q["done"]:
+        head += f"  [done: {q['done_note']}]"
+    status = f"picked {shown(q['pick'], {o['value']: o['name'] for o in q['options']})}" \
+        if q["pick"] not in (None, "", []) else "no pick yet"
+    if q["comment"]:
+        status += f'; comment: "{q["comment"]}"'
+    if brief:
+        return f"{head}  -  {status}"
+    lines = [head]
+    if q["subtitle"]:
+        lines.append(f"  {q['subtitle']}")
+    for o in q["options"]:
+        tag = " (current)" if o["current"] else ""
+        lines.append(f"  {o['value']}. {o['name']}{tag}" + (f": {o['blurb']}" if o["blurb"] else ""))
+        lines += [f"     + {p}" for p in o["pros"]] + [f"     - {c}" for c in o["cons"]]
+    lines.append(f"  Now: {status}")
+    return "\n".join(lines)
+
+
+def cmd_show(a):
+    srv = server(a.server)
+    data = questions(srv, a.slug, voter=a.voter, include_done=a.all or bool(a.group))
+    if a.group:
+        hit = [q for q in data["questions"] if q["key"] == a.group]
+        if not hit:
+            fail(f"no question {a.group!r} on {a.slug}; open ones: "
+                 + ", ".join(q["key"] for q in data["questions"] if not q["done"]))
+        data["questions"] = hit
+    if a.json:
+        print(json.dumps(data, indent=1, ensure_ascii=False))
+        return
+    if not a.group:
+        print(f"{a.slug} ({data['ws']}): {data['open']} open, {data['done']} done  {data['url']}")
+    for q in data["questions"]:
+        print(question_text(q, brief=a.brief))
+        if not a.brief:
+            print()
+
+
+def parse_pick(q: dict, raw: str):
+    """Turn "b" / "A,C" / "sso, docs" into the saved shape for the question's mode, or fail with the reason."""
+    by_value = {o["value"].lower(): o["value"] for o in q["options"]}
+    vals = [v.strip() for v in str(raw).split(",") if v.strip()]
+    if not vals:
+        fail(f"{q['key']}: no value given; options: {', '.join(o['value'] for o in q['options'])}")
+    bad = [v for v in vals if v.lower() not in by_value]
+    if bad:
+        fail(f"{q['key']}: {', '.join(bad)} is not an option; options: "
+             + ", ".join(f"{o['value']} ({o['name']})" for o in q["options"]))
+    vals = [by_value[v.lower()] for v in vals]
+    if len(set(vals)) != len(vals):
+        fail(f"{q['key']}: a value appears twice")
+    if q["mode"] == "one":
+        if len(vals) != 1:
+            fail(f"{q['key']} is pick-one: give exactly one of {', '.join(o['value'] for o in q['options'])}")
+        return vals[0]
+    return vals  # many: any subset; rank: in order of preference (a partial ranking is what the page allows too)
+
+
+def utc_ms() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _state_url(srv: dict, slug: str) -> str:
+    return f"http://127.0.0.1:{srv.get('port', 8765)}/state/{state_key(slug)}"
+
+
+def save_answer(srv: dict, slug: str, *, voter: str, section: str, group: str, pick=None, comment=None) -> str:
+    """Merge one question's answer into the saved state the way the page's shim does: only this question's pick
+    and/or comment change; every other question, section note and voter keeps the server's copy. Saves through the
+    page server's /state endpoint (so it is the same write path as a tap), or atomically to the file when the server
+    is down. Returns "server" or "file"."""
+    import urllib.error
+    import urllib.request
+
+    url = _state_url(srv, slug)
+    origin = f"http://127.0.0.1:{srv.get('port', 8765)}"
+
+    def fetch():
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"Cache-Control": "no-store"}),
+                                        timeout=5) as r:
+                return json.loads(r.read() or b"{}"), True
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return {"votes": {}, "closed": False}, True
+            return None, False
+        except (urllib.error.URLError, OSError, ValueError):
+            return None, False
+
+    state, via_server = fetch()
+    if state is None:
+        state = read_json(state_file(srv, slug)) or {"votes": {}, "closed": False}
+    if state.get("closed"):
+        fail(f"{slug} is closed to new picks")
+    votes = state.setdefault("votes", {})
+    ballot = votes.setdefault(voter, {"sections": {}})
+    sec = ballot.setdefault("sections", {}).setdefault(section, {"picks": {}, "note": "", "comments": {}})
+    sec.setdefault("picks", {})
+    sec.setdefault("comments", {})
+    sec.setdefault("note", "")
+    if pick is not None:
+        sec["picks"][group] = pick
+    if comment is not None:
+        if comment.strip():
+            sec["comments"][group] = comment.strip()[:1000]
+        else:
+            sec["comments"].pop(group, None)
+    ballot["at"] = utc_ms()
+    if via_server:
+        body = json.dumps(state).encode()
+        req = urllib.request.Request(url, data=body, method="POST",
+                                     headers={"Content-Type": "application/json", "Origin": origin})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                if r.status == 200:
+                    return "server"
+        except (urllib.error.URLError, OSError):
+            pass
+    write_json(state_file(srv, slug), state)
+    return "file"
+
+
+def cmd_pick(a):
+    srv = server(a.server)
+    d = page_dir(srv, a.slug)
+    with page_lock(d):
+        data = questions(srv, a.slug, voter=a.voter, include_done=True)
+        hit = [q for q in data["questions"] if q["key"] == a.group]
+        if not hit:
+            fail(f"no question {a.group!r} on {a.slug}; open ones: "
+                 + ", ".join(q["key"] for q in data["questions"] if not q["done"]))
+        q = hit[0]
+        if q["done"]:
+            fail(f"{a.group} ({q['title']}) is already done: {q['done_note']}")
+        keep = str(a.value).strip() == "-"
+        if keep and a.comment is None:
+            fail("'-' keeps the current pick, so give a --comment")
+        pick = None if keep else parse_pick(q, a.value)
+        names = {o["value"]: o["name"] for o in q["options"]}
+        final = q["pick"] if keep else pick
+        vals = final if isinstance(final, list) else ([] if final in (None, "") else [final])
+        result = {"ok": True, "slug": a.slug, "group": q["key"], "title": q["title"], "section": q["section"],
+                  "mode": q["mode"], "voter": a.voter, "pick": final, "pick_name": [names.get(v, "") for v in vals],
+                  "comment": (a.comment.strip()[:1000] if a.comment is not None else q["comment"]),
+                  "saved": False}
+        if not a.dry_run:
+            result["via"] = save_answer(srv, a.slug, voter=a.voter, section=q["section"], group=q["key"],
+                                        pick=pick, comment=a.comment)
+            result["saved"] = True
+    if a.json:
+        print(json.dumps(result, ensure_ascii=False))
+        return
+    what = shown(result["pick"], names)
+    verb = "would save" if a.dry_run else "saved"
+    c = f'; comment: "{result["comment"]}"' if result["comment"] else ""
+    print(f"{verb} {what} on {q['key']} ({q['title']}) for {a.voter}{c}")
+
+
 # ---------------------------------------------------------------- picks out
 
 def cmd_votes(a):
@@ -640,6 +851,27 @@ def main():
     p.add_argument("slug")
     p.add_argument("--server", default="orbital")
     p.set_defaults(fn=cmd_rebuild)
+
+    p = sub.add_parser("show", help="open questions with options, pros and cons, and the current pick")
+    p.add_argument("slug")
+    p.add_argument("group", nargs="?", help="just this question")
+    p.add_argument("--brief", action="store_true", help="one line per question")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--all", action="store_true", help="include Done")
+    p.add_argument("--voter", default="jon")
+    p.add_argument("--server", default="orbital")
+    p.set_defaults(fn=cmd_show)
+
+    p = sub.add_parser("pick", help="answer a question without the page (merged like a tap)")
+    p.add_argument("slug")
+    p.add_argument("group")
+    p.add_argument("value", help="option value; comma-separated for many/rank (rank in order); '-' = comment only")
+    p.add_argument("--comment", help="free text for this question ('' clears it)")
+    p.add_argument("--voter", default="jon")
+    p.add_argument("--dry-run", action="store_true", help="validate only")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--server", default="orbital")
+    p.set_defaults(fn=cmd_pick)
 
     p = sub.add_parser("votes")
     p.add_argument("slug")
