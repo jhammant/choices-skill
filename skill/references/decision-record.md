@@ -22,10 +22,11 @@ picker instead of copying its art.
 | C | <name> | … | … |
 
 ## Decision
-**<Chosen option(s)>**, plus any mix-and-match from the notes, stated precisely.
+**<Chosen option(s)>**, plus any change or mix-and-match from the question comments and notes, stated precisely.
 <For team votes: the tally (e.g. "B 4 votes, A 2, C 1") and any strong dissent from the notes.>
 
 ## Notes and comments
+- <name> (comment on <question>): "<comment>" → <how it changes the pick, e.g. "A with X changed">
 - <name> (note on <section>): "<note>" → <how it's reflected, or "interpreted as …: confirm">
 - <name> (comment on option <X>): "<comment>" → <how it's reflected>
 

@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 
 const loadConfig = () => JSON.parse(readFileSync(new URL('./choices-config.json', import.meta.url), 'utf8'));
 const CHANGE_ALERT_GAP = 30 * 60 * 1000;
-const MAX_BODY = 20000;
+const MAX_BODY = 100000; // a ballot carries picks plus a note per section and a comment per question (1000 chars each)
 const hash = (t) => createHash('sha256').update(String(t)).digest('hex');
 const fail = (status, error) => { throw Object.assign(new Error(error), { status }); };
 const cleanName = (n) => (typeof n === 'string' ? n.replace(/\s+/g, ' ').trim().slice(0, 40) : '');
@@ -19,7 +19,9 @@ export function summary(sections, meta) {
     for (const g of s.groups) {
       const raw = sec.picks?.[g.key];
       const picks = Array.isArray(raw) ? raw : raw ? [raw] : [];
-      if (picks.length) parts.push(`${g.title} → ${picks.map((v) => g.names?.[v] || v).join(g.mode === 'rank' ? ' > ' : ', ')}`);
+      const comment = sec.comments?.[g.key] ? ` (comment: “${String(sec.comments[g.key]).slice(0, 140)}”)` : '';
+      if (picks.length) parts.push(`${g.title} → ${picks.map((v) => g.names?.[v] || v).join(g.mode === 'rank' ? ' > ' : ', ')}${comment}`);
+      else if (comment) parts.push(`${g.title}${comment}`);
     }
     if (sec.note) parts.push(`note: “${String(sec.note).slice(0, 140)}”`);
   }

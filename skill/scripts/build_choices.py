@@ -218,12 +218,19 @@ def section_html(s, counter, base):
             counter[0] += 1
             opts.append(option_html(s["key"], g, o, counter[0], base))
         sub = f'<p class="sub">{esc(g.get("subtitle"))}</p>' if g.get("subtitle") else ""
+        # Every question gets its own free-text comment box (no config): "A but change X" lives here.
+        gc_id = f"gc{counter[0]}"
         blocks.append(f"""
       <div class="group">
         <h3>{esc(g['title'])}<span class="hint">{hint}</span></h3>{sub}
         <fieldset class="opts" data-mode="{mode}" style="--min: {int(min_w)}px">
           <legend class="sr-only">{esc(g['title'])}</legend>{''.join(opts)}
         </fieldset>
+        <div class="gnote">
+          <label class="sr-only" for="{gc_id}">Your comment on “{esc(g['title'])}”</label>
+          <textarea id="{gc_id}" rows="1" maxlength="1000" placeholder="Comment or change (optional)" data-gc-s="{s['key']}" data-gc-g="{g['key']}"></textarea>
+          <div class="others" data-os="{s['key']}" data-og="{g['key']}"></div>
+        </div>
       </div>""")
     intro = f"<p>{esc(s.get('intro'))}</p>" if s.get("intro") else ""
     return f"""

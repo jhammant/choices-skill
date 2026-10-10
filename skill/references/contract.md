@@ -70,6 +70,29 @@ file contributes `sections` (section keys must be unique across files).
 | `mermaid` | diagram source | The Artifact viewer renders Mermaid natively, and a pinned cdnjs fallback draws it anywhere else. |
 | `image` | a file path | Relative to the JSON file. It's embedded as a data URI and downsized to 1200px. |
 
+## Comment boxes (automatic, no config)
+
+Every question (group) gets its own small free-text box under its options ("Comment or change (optional)"), in all
+three modes (`one`, `many`, `rank`). Each section keeps its notes box as well. Nothing in the JSON turns either on or
+off. Jon asked for this on 7 Oct 2026: "I would always like to be able to give freetext".
+
+## Saved ballot shape
+
+Each voter's ballot (claude.ai `votes/<id>`, the tailnet state file, or the hosted export) is:
+
+```json
+{"sections": {"<sectionKey>": {
+  "picks": {"<groupKey>": "A", "<manyKey>": ["A", "C"], "<rankKey>": ["sso", "docs"]},
+  "note": "free text for the whole section",
+  "comments": {"<groupKey>": "free text for that one question"}
+}}}
+```
+
+`comments` only holds questions that have text (up to 1000 characters each). Older ballots without it still load.
+"Copy my choices" puts each comment on the line after its pick as `  Comment: <text>`, and `tally.py` prints them
+under each question's results, per voter. **Read the comments before acting on the picks.** A comment like "A but
+change X" or "none of these" overrides the plain pick.
+
 ## Helper prompt for fan-out (one section per agent)
 
 > Read `SKILL_DIR/references/contract.md` and `SKILL_DIR/references/options-craft.md`. Write ONE file,

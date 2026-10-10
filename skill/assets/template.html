@@ -109,6 +109,14 @@ body.show-tally .tally { display: block; }
 .note textarea { font: 15px var(--sans); color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-height: 64px; width: 100%; resize: vertical; }
 .note textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
 .others { font-size: 14px; color: var(--muted); display: grid; gap: 4px; }
+.others:empty { display: none; }
+/* Per-question comment box: light until used. 16px text so iOS doesn't zoom on focus; 44px tall for touch. */
+.gnote { display: flex; flex-direction: column; gap: 4px; max-width: 640px; }
+.gnote textarea { font: 16px/1.4 var(--sans); color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-height: 44px; max-height: 240px; width: 100%; resize: vertical; field-sizing: content; }
+.gnote textarea::placeholder { color: var(--muted); }
+.gnote textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; background: var(--card); }
+.gnote textarea:not(:placeholder-shown) { background: var(--card); border-color: var(--muted); }
+.gnote textarea:disabled { opacity: 0.6; }
 
 .invite { display: grid; gap: 10px; padding: 14px 16px; background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; max-width: 72ch; }
 .invite[hidden] { display: none; }
@@ -158,13 +166,16 @@ body.show-tally .tally { display: block; }
   var META = {{META}};
   var BY_KEY = {};
   META.sections.forEach(function (s) { BY_KEY[s.key] = s; s.groupsByKey = {}; s.groups.forEach(function (g) { s.groupsByKey[g.key] = g; }); });
-  var my = {};         // { sectionKey: { picks: { groupKey: "A" | ["A","C"] }, note: "" } }
+  var my = {};         // { sectionKey: { picks: { groupKey: "A" | ["A","C"] }, note: "", comments: { groupKey: "" } } }
   var all = {};        // { voterId: { sections: {...} } }
   var uid = null, db = null, userNs = null, closed = false, loadedMine = false, saveTimer = null;
 
   function $(sel, el) { return (el || document).querySelector(sel); }
   function $$(sel, el) { return Array.prototype.slice.call((el || document).querySelectorAll(sel)); }
-  function sec(s) { return my[s] || (my[s] = { picks: {}, note: "" }); }
+  function sec(s) { var o = my[s] || (my[s] = { picks: {}, note: "", comments: {} }); if (!o.comments) o.comments = {}; return o; }
+  function isTyping() { var a = document.activeElement; return !!(a && a.dataset && (a.dataset.note || a.dataset.gcS)); }
+  var FITS = typeof CSS !== "undefined" && CSS.supports && CSS.supports("field-sizing", "content");
+  function fit(t) { if (FITS) return; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight + 2, 240) + "px"; }
   function asList(v) { return Array.isArray(v) ? v : (typeof v === "string" && v ? [v] : []); }
 
   function groupDone(g, v) { return g.mode === "one" ? typeof v === "string" && v !== "" : asList(v).length > 0; }
@@ -192,7 +203,8 @@ body.show-tally .tally { display: block; }
       var lines = s.groups.map(function (g) {
         var list = asList(p[g.key]);
         var shown = list.length ? list.map(function (v) { return v + " " + (g.names[v] || ""); }).join(g.mode === "rank" ? " > " : ", ") : "–";
-        return "  " + g.title + ": " + shown;
+        var c = String(sec(s.key).comments[g.key] || "").trim();
+        return "  " + g.title + ": " + shown + (c ? "\n  Comment: " + c.replace(/\s*\n\s*/g, "\n    ") : "");
       });
       var note = (sec(s.key).note || "").trim();
       out.push(s.title + "\n" + lines.join("\n") + (note ? "\n  Note: " + note : ""));
@@ -233,6 +245,11 @@ body.show-tally .tally { display: block; }
       if (noteEl && document.activeElement !== noteEl && noteEl.value !== (sec(s.key).note || "")) noteEl.value = sec(s.key).note || "";
       noteEl && (noteEl.disabled = closed || (!uid && !!db));
     });
+    $$("textarea[data-gc-s]").forEach(function (t) {
+      var want = sec(t.dataset.gcS).comments[t.dataset.gcG] || "";
+      if (document.activeElement !== t && t.value !== want) { t.value = want; fit(t); }
+      t.disabled = closed || (!uid && !!db);
+    });
     var done = 0, total = 0;
     META.sections.forEach(function (s) {
       var sDone = true;
@@ -258,6 +275,17 @@ body.show-tally .tally { display: block; }
           var row = document.createElement("div");
           var who = (profiles && profiles[id] && profiles[id].name) || "Someone";
           row.textContent = who + ": " + String(n).slice(0, 400);
+          box.appendChild(row);
+        });
+      });
+      $$(".others[data-os][data-og]").forEach(function (box) {
+        box.replaceChildren();
+        ids.forEach(function (id) {
+          var c = ((((all[id].sections || {})[box.dataset.os]) || {}).comments || {})[box.dataset.og];
+          if (!c) return;
+          var row = document.createElement("div");
+          var who = (profiles && profiles[id] && profiles[id].name) || "Someone";
+          row.textContent = who + ": " + String(c).slice(0, 400);
           box.appendChild(row);
         });
       });
@@ -321,8 +349,13 @@ body.show-tally .tally { display: block; }
   });
   document.addEventListener("input", function (e) {
     var t = e.target;
-    if (!t.dataset || !t.dataset.note) return;
-    sec(t.dataset.note).note = t.value.slice(0, 1000);
+    if (!t.dataset || closed) return;
+    if (t.dataset.note) sec(t.dataset.note).note = t.value.slice(0, 1000);
+    else if (t.dataset.gcS && BY_KEY[t.dataset.gcS] && BY_KEY[t.dataset.gcS].groupsByKey[t.dataset.gcG]) {
+      var cm = sec(t.dataset.gcS).comments;
+      if (t.value) cm[t.dataset.gcG] = t.value.slice(0, 1000); else delete cm[t.dataset.gcG];
+      fit(t);
+    } else return;
     $("#summary").textContent = summaryText();
     queueSave();
   });
@@ -346,7 +379,12 @@ body.show-tally .tally { display: block; }
         if (typeof v === "string") picks[gk] = v.slice(0, 80);
         else if (Array.isArray(v)) picks[gk] = v.filter(function (s) { return typeof s === "string"; }).slice(0, 50);
       });
-      out[sk] = { picks: picks, note: typeof src.note === "string" ? src.note.slice(0, 1000) : "" };
+      var comments = {};
+      Object.keys((src.comments && typeof src.comments === "object") ? src.comments : {}).forEach(function (gk) {
+        var c = src.comments[gk];
+        if (BY_KEY[sk].groupsByKey[gk] && typeof c === "string" && c) comments[gk] = c.slice(0, 1000);
+      });
+      out[sk] = { picks: picks, note: typeof src.note === "string" ? src.note.slice(0, 1000) : "", comments: comments };
     });
     return out;
   }
@@ -401,7 +439,7 @@ body.show-tally .tally { display: block; }
         var next = {};
         snap.docs.forEach(function (d) { var v = d.data(); if (v && d.id !== "probe") next[d.id] = { sections: sanitizeSections(v.sections) }; });
         all = next;
-        if (uid && all[uid] && (!loadedMine || (!saveTimer && !(document.activeElement && document.activeElement.dataset && document.activeElement.dataset.note)))) {
+        if (uid && all[uid] && (!loadedMine || (!saveTimer && !isTyping()))) {
           my = JSON.parse(JSON.stringify(all[uid].sections));
         }
         loadedMine = true;

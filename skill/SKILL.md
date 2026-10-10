@@ -57,9 +57,29 @@ python3 "$SKILL_DIR/scripts/build_choices.py" choices.json [section-*.json ...] 
 The builder validates the file (keys, modes, unique values, content types, static HTML only) and fails with a clear
 message. View `check.png` once and fix anything clearly broken (clipped art, unreadable text). Don't loop.
 
+**Every question automatically gets its own free-text comment box** under its options, in every mode and on every
+host (claude.ai, tailnet, hosted). There's no config for it, and each section's notes box stays too. Jon, 7 Oct 2026:
+"I would always like to be able to give freetext". Comments save with the picks as `comments: {<groupKey>: "<text>"}`
+inside each section's ballot (see `references/contract.md`).
+
 ## 5. Publish and share
 
 **Choose the audience**, because it decides how the page is published:
+- **Jon alone (the default for his own solo pages; he picks from his iPad or phone, often out):** host it on his
+  tailnet. It's private (tailnet only, never Funnel), picks save to a file on the Mac that Claude reads directly, and
+  nothing goes to claude.ai or hammantlabs. Jon, 7 Oct 2026: "this should be a standard flow".
+  ```bash
+  python3 "$SKILL_DIR/scripts/tailnet.py" build choices.json [section-*.json] --slug <short-name> [--server orbital]
+  python3 "$SKILL_DIR/scripts/tailnet.py" votes <slug> <out_dir> --server orbital   # then tally.py <out_dir> choices.json
+  ```
+  - **For Jon's own decisions, add to his live page instead** (see "Live pages" below). Use a one-off `build` only
+    for a separate, self-contained decision.
+  - The server must match the workspace. `orbital` is the triage pageserver (~/dev/orbital/triage →
+    https://ghost.tail22c501.ts.net); `personal` (:8767) and `recos` (:8768) have their own servers. Never put
+    another workspace's page on a server. `tailnet.py servers` lists them (config: `~/.config/choices/tailnet.json`).
+    A workspace with no server yet (founder, oss) uses a private claude.ai artifact.
+  - `--replace` rebuilds the same URL in place and keeps saved picks. Re-read the picks before acting on them.
+  - Tested end to end on 7 Oct 2026 (Playwright): a click saves through the tailnet origin and survives a reload.
 - **The user alone, or colleagues in their Claude organization**: top-level `mode` is `solo` or `team`. Picks save
   automatically and everyone sees live tallies and each other's notes. Publish with these capabilities exactly. They
   give each voter their own ballot, everyone sees the tallies, and only editors can close voting:
@@ -87,7 +107,8 @@ message. View `check.png` once and fix anything clearly broken (clipped art, unr
   python3 "$SKILL_DIR/scripts/hosted.py" invite <slug> "Anna" "Ben Smith"   # one personal link each
   ```
   - **Invite-only by default.** Only personal links vote; anyone else with the URL sees results only. `--open` lets
-    anyone with the URL vote after typing a name (rate-limited). Comments stay a claude.ai feature; voters use the notes.
+    anyone with the URL vote after typing a name (rate-limited). Pinned "Comment on A" threads stay a claude.ai
+    feature; voters use the per-question comment boxes and section notes, which save with their picks.
   - **Hand Jon the share kit:** the personal links (`hosted.py links <slug>`) plus a short message for each. Send
     nothing without his "send". Treat the owner link (printed at build) like a password: it can invite and close.
   - **Read the picks:** `hosted.py status <slug>` (who opened, who voted), then `hosted.py votes <slug> <out_dir>` and
@@ -127,12 +148,47 @@ then `delete` it, pinning the version you got. The page ignores a doc called `pr
 5. If there's a deadline, an offer to schedule a nudge (a reminder skill or a scheduled task, if available) for people the day before, and to close voting and
    tally at the deadline.
 
+### Live pages (default for Jon)
+
+Jon's pages are always on his tailnet, and each workspace has **one live page**. Sessions stream new questions into
+it, and an open page shows "N new items: tap to load". The page reloads by itself only when no text box has focus
+and nothing was typed or picked for 30 s, and saves picks first. Jon, 7 Oct 2026: "How could we setup a choices page
+so stuff get's streamed/added to it? They should always serve over tailnet".
+
+| Workspace | Live page | `--server` |
+|---|---|---|
+| orbital | https://ghost.tail22c501.ts.net/choices/orbital/ | `orbital` |
+| personal | https://ghost.tail22c501.ts.net:8767/choices/personal/ | `personal` |
+| recos | https://ghost.tail22c501.ts.net:8768/choices/recos/ | `recos` |
+
+```bash
+T="$SKILL_DIR/scripts/tailnet.py"
+python3 "$T" add orbital section-x.json --owner <this-session-name>   # write a section file as usual, then add it
+python3 "$T" list orbital                                             # open questions and Jon's picks so far
+python3 "$T" resolve orbital <groupKey> --note "Sent to Tom 18:05"    # done: moves it to the collapsed Done section
+python3 "$T" remove orbital <groupKey>                                # added by mistake: deletes it and its picks
+```
+
+- **Group keys must be unique across the whole page**: `add` fails on a clash, so prefix keys with your topic
+  (e.g. `crm-owner`, not `q1`). Section-key clashes are renamed for you. Saved picks survive every rebuild.
+- **Reading picks:** the loom job `choices-watch` (every 2 min) appends each newly answered question to
+  `<root>/choices/<slug>/picks.jsonl` as `{group, pick, comment, at, owner, ws, title, section, pick_name}` and
+  sends Jon one counts-only line ("Choices: 3 new picks on orbital"). It never acts. **Claude acts:** read
+  `picks.jsonl` (your own questions have your `owner`), read the comment first since it overrides the pick, act
+  (sends still need Jon's approval of the exact text), then `resolve` with a note saying what happened.
+- Sources live in `<root>/choices/<slug>/src/`, bookkeeping in `live.json`, the version in `version.json`. Never
+  edit them by hand; use the commands. After a template change, `tailnet.py rebuild <slug>` refreshes the page.
+- Tested end to end on 7 Oct 2026 (Playwright, 25 checks): banner, tap and auto reload, typing blocks the reload,
+  picks and comments save, watcher line, resolve to Done, remove, and the personal server.
+
 ## 6. Read the picks
 
 When the user says the picks are in (or asks for a status):
 1. ArtifactData `list` on `votes` with `out_dir` set to a scratch folder.
 2. `python3 "$SKILL_DIR/scripts/tally.py" <out_dir> choices.json [section-*.json ...]` prints the winners, counts
-   or rank points, each voter's picks, and notes.
+   or rank points, each voter's picks, each question's comments, and the section notes. **Read every question's
+   comments before acting on its pick.** A comment like "A but change X" overrides the plain pick: build A with X
+   changed, and say so in the record.
 3. For team votes, resolve voter ids to names with ArtifactData `profiles`, and never write ids into documents
    people read.
 4. **Read the comments:** ArtifactComments `read` with the page URL. Each thread is pinned to an option card or a

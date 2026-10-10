@@ -111,10 +111,28 @@ test('bad requests are refused cleanly', async () => {
   const { call } = setup();
   assert.equal((await call('GET', '/api/nope')).status, 404);
   assert.equal((await call('PUT', '/api/votes', { token: OWNER, body: { sections: [] } })).status, 400);
-  assert.equal((await call('POST', '/api/invite', { token: OWNER, body: { names: ['x'.repeat(30000)] } })).status, 413);
+  assert.equal((await call('POST', '/api/invite', { token: OWNER, body: { names: ['x'.repeat(200000)] } })).status, 413);
 });
 
 test('summary turns picks into option names', () => {
   assert.equal(summary(vote('B').sections, meta), 'Colour → Forest');
   assert.equal(summary({}, meta), 'no picks yet');
+});
+
+test('per-question comments save, read back unchanged and show in alerts', async () => {
+  const { call, alerts } = setup();
+  const [anna] = (await call('POST', '/api/invite', { token: OWNER, body: { names: ['Anna'] } })).json.invited;
+  const ballot = { sections: { look: { picks: { colour: 'A' }, note: '', comments: { colour: 'A but darker. ' + 'x'.repeat(990) } } } };
+  assert.equal((await call('PUT', '/api/votes', { token: anna.token, body: ballot })).status, 200);
+  assert.deepEqual((await call('GET', '/api/votes')).json.votes, [{ id: anna.id, sections: ballot.sections }]);
+  assert.ok(alerts.some((m) => /Anna voted on .*Colour → Ocean blue \(comment: “A but darker\./.test(m)), alerts.join('\n'));
+  assert.equal(summary({ look: { picks: {}, comments: { colour: 'none of these' } } }, meta), 'Colour (comment: “none of these”)');
+});
+
+test('a full ballot with long comments on many questions fits under the body cap', async () => {
+  const { call } = setup();
+  const [anna] = (await call('POST', '/api/invite', { token: OWNER, body: { names: ['Anna'] } })).json.invited;
+  const comments = Object.fromEntries(Array.from({ length: 30 }, (_, i) => ['g' + i, 'y'.repeat(1000)]));
+  const r = await call('PUT', '/api/votes', { token: anna.token, body: { sections: { look: { picks: {}, note: 'n'.repeat(1000), comments } } } });
+  assert.equal(r.status, 200);
 });

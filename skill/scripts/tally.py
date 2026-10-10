@@ -6,7 +6,8 @@ Usage:
 
 <votes_dir> is the ArtifactData out_dir from a `list` of the `votes` collection (one JSON file per voter, in the
 <out_dir>/votes/ subfolder or directly in it). Voter ids are printed as-is: resolve them to names with
-ArtifactData `profiles` and substitute them when writing the decision record.
+ArtifactData `profiles` and substitute them when writing the decision record. Each question's free-text comments
+print under its results, per voter; a comment like "A but change X" overrides the plain pick.
 """
 import json
 import sys
@@ -64,6 +65,14 @@ def main():
                 print(f"- {v} {names.get(v, '')}: {n} {label}")
             if per_voter:
                 print("\n" + "\n".join(f"  - {line}" for line in per_voter))
+            comments = [(vid, (((secs.get(s["key"]) or {}).get("comments") or {}).get(g["key"]) or ""))
+                        for vid, secs in votes.items()]
+            comments = [(vid, c.strip()) for vid, c in comments if isinstance(c, str) and c.strip()]
+            if comments:
+                # A comment can override the plain pick ("A but change X"): read these before acting on the winner.
+                print("\nComments:")
+                for vid, c in comments:
+                    print(f"  - {vid}: " + c.replace("\n", "\n    "))
             print()
         notes = [(vid, (secs.get(s["key"]) or {}).get("note", "")) for vid, secs in votes.items()]
         notes = [(vid, n) for vid, n in notes if n]
