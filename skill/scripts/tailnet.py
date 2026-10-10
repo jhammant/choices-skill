@@ -585,9 +585,10 @@ def cmd_rebuild(a):
 def questions(srv: dict, slug: str, *, voter: str = "jon", include_done: bool = False) -> dict:
     """Every question on a live page, in page order, with its options and the voter's current answer.
 
-    {"slug", "url", "ws", "open": n, "done": n, "questions": [{"key", "title", "subtitle", "section",
+    {"slug", "url", "ws", "src", "open": n, "done": n, "questions": [{"key", "title", "subtitle", "section",
      "section_title", "mode", "owner", "done", "done_note", "options": [{"value", "name", "blurb", "pros", "cons",
-     "current", "content"}], "pick", "pick_name", "comment"}]}"""
+     "current", "content" (type), "content_body", "content_lang"}], "pick", "pick_name", "comment"}]}
+    An image option's content_body is relative to "src"."""
     d = page_dir(srv, slug)
     manifest = load_manifest(d)
     resolved = manifest["resolved"]
@@ -611,12 +612,14 @@ def questions(srv: dict, slug: str, *, voter: str = "jon", include_done: bool = 
                     "options": [{"value": str(o["value"]), "name": o.get("name", str(o["value"])),
                                  "blurb": o.get("blurb", ""), "pros": list(o.get("pros") or []),
                                  "cons": list(o.get("cons") or []), "current": bool(o.get("current")),
-                                 "content": (o.get("content") or {}).get("type", "")}
+                                 "content": (o.get("content") or {}).get("type", ""),
+                                 "content_body": str((o.get("content") or {}).get("body", ""))[:20000],
+                                 "content_lang": (o.get("content") or {}).get("lang", "")}
                                 for o in g.get("options", [])],
                     "pick": pick, "pick_name": [names.get(str(v), "") for v in vals],
                     "comment": row.get("comment", "") or ""})
     out.sort(key=lambda q: q["done"])  # open first, page order kept within each (sort is stable)
-    return {"slug": slug, "url": page_url(srv, slug), "ws": manifest.get("ws", srv["ws"]),
+    return {"slug": slug, "url": page_url(srv, slug), "ws": manifest.get("ws", srv["ws"]), "src": str(d / "src"),
             "open": len(manifest["groups"]) - len(resolved), "done": len(resolved), "questions": out}
 
 

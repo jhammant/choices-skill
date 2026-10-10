@@ -180,6 +180,30 @@ python3 "$T" remove orbital <groupKey>                                # added by
   edit them by hand; use the commands. After a template change, `tailnet.py rebuild <slug>` refreshes the page.
 - Tested end to end on 7 Oct 2026 (Playwright, 25 checks): banner, tap and auto reload, typing blocks the reload,
   picks and comments save, watcher line, resolve to Done, remove, and the personal server.
+- **Answering without the page** (other sessions, the voice front end, a shell):
+  `tailnet.py show <slug> [<groupKey>] [--brief|--json]` prints the open questions with options, pros, cons, the
+  current pick and comment. `tailnet.py pick <slug> <groupKey> A[,C...] [--comment "..."] [--dry-run]` validates
+  the value against the question's options and mode (rank values go in order; `-` keeps the pick and sets only the
+  comment), then merges just that question into the saved state like a tap. Open pages re-read the state every
+  20 s, so the pick shows without a reload, and a page only ever writes back what was tapped or typed on it.
+
+### Voice (Orbital page)
+
+Jon can talk the Orbital page through: **https://ghost.tail22c501.ts.net:8770/** on his iPad, phone or laptop.
+He taps Start once (the mic and speaker unlock), then talks hands-free: "what's open?", "explain the bids question",
+"pick A on bids, note: only if Robbie agrees the IP terms". A pane next to the conversation shows the question's
+option cards, highlights the option being discussed, and shows a staged answer with Save / Cancel. Nothing is
+saved until he says yes or taps Save; he can also tap a card instead of speaking. He can talk over a reply to stop
+it.
+
+- It's CallMeClaude's `cmc choices` (`~/dev/utilities/ClaudeCodeToVoice`, `src/callmeclaude/choices/`): loom
+  daemon `choices-voice` on 127.0.0.1:8770, `tailscale serve --https=8770` (tailnet only, never Funnel), and only
+  Jon's tailnet login gets in. Restart: `launchctl kickstart -k gui/$(id -u)/loom.job.choices-voice`.
+- Speech is Deepgram Flux (turn detection) and ElevenLabs (voice); Jon approved cloud speech for this on 10 Oct
+  2026. Claude runs through the Agent SDK on his subscription with only the choices tools. Every read and write goes
+  through `tailnet.py show` / `pick`, so voice picks reach `picks.jsonl` through `choices-watch` like taps.
+- Timings (never words) log to `~/.callmeclaude/choices/timings.jsonl`. Service log:
+  `~/dev/homeserver/loom/fleet/logs/jobs/choices-voice.log`.
 
 ## 6. Read the picks
 
