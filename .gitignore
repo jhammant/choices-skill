@@ -6,3 +6,6 @@ __pycache__/
 # closecode: keep private session state out of this public repo
 STATE.md
 .sessions/
+
+# local editing backups
+*.bak-*

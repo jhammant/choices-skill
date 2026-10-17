@@ -10,7 +10,9 @@ or changed pick or comment) and each changed section note to <root>/choices/<slu
 
 Then it sends ONE counts-only notify line, e.g. "Choices: 3 new picks on orbital". Never the content.
 
-It never files tickets and never acts on a pick. Acting stays with a live Claude session: read picks.jsonl (the
+On the Orbital server each pick also updates Jon's to-do list at once (14 Oct 2026): a plain pick closes the
+question's item (t-ch-<slug>-<group>) with the pick as evidence; a pick with a comment moves it to In flight with
+the comment as its why. It never files tickets and never acts on a pick otherwise. Acting stays with a live Claude session: read picks.jsonl (the
 "owner" is the session that added the question), act, then `tailnet.py resolve <slug> <group> --note "..."`.
 
   tailnet_watch.py               # one pass (what the loom job runs)
@@ -90,6 +92,41 @@ def append(path: Path, lines: list):
         path.chmod(0o600)
 
 
+TODO = Path.home() / ".claude" / "skills" / "todo" / "scripts" / "todo.py"
+
+
+def todo_on_pick(srv: dict, slug: str, lines: list) -> int:
+    """Jon, 14 Oct 2026: a pick closes its to-do item straight away (no resolve needed). A pick that comes with a
+    comment stays open but moves to In flight with the comment as its why, because Claude has to act on it.
+    Orbital only; the item is t-ch-<slug>-<group>, added by `tailnet.py add`."""
+    if srv.get("ws") != "orbital" or not TODO.exists():
+        return 0
+    env = {**__import__("os").environ, "TODO_FROM_CHOICES": "1"}   # don't resolve the question: Claude does that after acting
+    n = 0
+    for ln in lines:
+        if not ln.get("group"):
+            continue
+        iid = f"t-ch-{slug}-{ln['group']}"[:80]
+        names = [x for x in (ln.get("pick_name") or []) if x]
+        pick = ln.get("pick")
+        shown = ", ".join(names) if names else (", ".join(map(str, pick)) if isinstance(pick, list) else str(pick or ""))
+        if ln.get("comment"):
+            args = ["set", iid, "section=flight", "owner=Claude", "flag=",
+                    "why=Your comment: " + ln["comment"].replace("\n", " ")[:220] + (f" (picked: {shown})" if shown else ""),
+                    "--by", "choices-watch"]
+        elif pick not in (None, "", []):
+            args = ["done", iid, "--evidence", f"Picked on the decisions page: {shown}"[:200], "--by", "choices-watch", "--quiet"]
+        else:
+            continue
+        try:
+            py = __import__("shutil").which("python3", path="/opt/homebrew/bin:/usr/local/bin") or sys.executable
+            r = subprocess.run([py, str(TODO), *args], capture_output=True, text=True, timeout=60, env=env)
+            n += r.returncode == 0
+        except Exception as e:   # the watcher must keep logging picks even if the list is unavailable
+            print(f"{slug}/{ln['group']}: to-do list not updated ({type(e).__name__})")
+    return n
+
+
 def run(dry=False) -> dict:
     counts = {}
     for name, srv in tailnet.servers().items():
@@ -110,6 +147,7 @@ def run(dry=False) -> dict:
             if not dry:
                 if lines:
                     append(d / "picks.jsonl", lines)
+                    todo_on_pick(srv, slug, lines)
                 tailnet.write_json(snap, cur)
             if lines:
                 ws = manifest.get("ws") or srv["ws"]

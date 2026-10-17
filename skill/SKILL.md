@@ -148,6 +148,16 @@ then `delete` it, pinning the version you got. The page ignores a doc called `pr
 5. If there's a deadline, an offer to schedule a nudge (a reminder skill or a scheduled task, if available) for people the day before, and to close voting and
    tally at the deadline.
 
+### Decisions only, and every question is on Jon's to-do list (13 Oct 2026)
+
+Jon: *"I need an easy way just to see the things I actually need to do."* A /choices page is for **choosing
+between real options**, never a to-do list, a tracker or a "tick what's done" checklist: those go on the one list
+(/todo, https://ghost.tail22c501.ts.net/pages/todo/). On the Orbital server, `tailnet.py add` and `tailnet.py build`
+put each open question on that list as ONE item (`t-ch-<slug>-<group>`, "Decide: ...", linking to the page). Jon's
+pick closes it straight away (live page: `choices-watch` within 2 min; one-off page: autoclose). A pick with a comment
+moves it to In flight for Claude to act on; `resolve` after acting. Prefer the live page over a new one-off page. Use
+`--no-todo` only for team votes or tests.
+
 ### Live pages (default for Jon)
 
 Jon's pages are always on his tailnet, and each workspace has **one live page**. Sessions stream new questions into
@@ -171,6 +181,14 @@ python3 "$T" remove orbital <groupKey>                                # added by
 
 - **Group keys must be unique across the whole page**: `add` fails on a clash, so prefix keys with your topic
   (e.g. `crm-owner`, not `q1`). Section-key clashes are renamed for you. Saved picks survive every rebuild.
+- **Any session acts, not only the owner (15 Oct 2026).** Román's "send as drafted" (12 Oct) sat three days unsent,
+  and six section notes went unread, because only the session that asked was expected to act and it had gone. Now
+  `tailnet.py waiting <slug>` lists every pick, comment and section note nobody has acted on, whoever asked, and a
+  SessionStart hook (`scripts/waiting_hook.sh`) prints the ones over an hour old in every Orbital or RecOS session.
+  If you see them, they're yours: act, then `resolve <slug> <group> --note ...` for a question or
+  `ack <slug> <section> --note ...` for a section note. `resolve` prints Jon's comment and section note first,
+  because those override a plain pick ("cancel this whole task!" was once resolved as the pick). A drafted message
+  he picked is approval only while the text is still true; stale dates or slots go back to him first.
 - **Reading picks:** the loom job `choices-watch` (every 2 min) appends each newly answered question to
   `<root>/choices/<slug>/picks.jsonl` as `{group, pick, comment, at, owner, ws, title, section, pick_name}` and
   sends Jon one counts-only line ("Choices: 3 new picks on orbital"). It never acts. **Claude acts:** read

@@ -109,6 +109,38 @@ def page_url(srv: dict, slug: str) -> str:
     return f"{srv['base'].rstrip('/')}/choices/{slug}/"
 
 
+# ---------------------------------------------------------------- the one to-do list (Orbital)
+# Jon, 13 Oct 2026: "I need an easy way just to see the things I actually need to do". Every open question on an
+# Orbital page is also ONE item on the to-do list (https://ghost.tail22c501.ts.net/pages/todo/), linking here,
+# and it closes when the question is picked (one-off page) or resolved (live page). Other workspaces: no list.
+TODO = Path.home() / ".claude" / "skills" / "todo" / "scripts" / "todo.py"
+
+
+def todo_hook(srv: dict, *args) -> None:
+    if srv.get("ws") != "orbital" or not TODO.exists() or os.environ.get("CHOICES_NO_TODO"):
+        return
+    import subprocess
+    try:
+        r = subprocess.run([sys.executable, str(TODO), *args], capture_output=True, text=True, timeout=60,
+                           env={**os.environ, "TODO_FROM_CHOICES": "1"})
+        if r.returncode == 0 and r.stdout.strip():
+            print(f"to-do list: {r.stdout.strip().splitlines()[-1]}")
+    except Exception as e:  # the page must never fail because the list is unavailable
+        print(f"to-do list: not updated ({type(e).__name__})", file=sys.stderr)
+
+
+def todo_add_groups(srv: dict, slug: str, groups: dict, owner: str = "") -> None:
+    """groups: {groupKey: title}. One Needs-you-now item per open question."""
+    for gkey, title in groups.items():
+        todo_hook(srv, "add", "--id", f"t-ch-{slug}-{gkey}"[:80], "--title", f"Decide: {title}",
+                  "--why", "A question on your decisions page.", "--section", "now",
+                  "--link", page_url(srv, slug), "--link-label", "Decide",
+                  "--source", f"choices:{slug}/{gkey}", "--close-when", f"choices:{slug}/{gkey}",
+                  "--by", owner or "choices", "--no-render")
+    if groups:
+        todo_hook(srv, "render")
+
+
 def read_json(path: Path, default=None):
     try:
         return json.loads(Path(path).read_text())
@@ -176,6 +208,14 @@ def cmd_build(a):
     if (out / "live.json").exists():
         fail(f"{slug} is a live page: use `add`, `resolve` or `build --live --replace`")
     render(srv, slug, a.inputs, owner=a.owner, voter=a.voter)
+    if not getattr(a, "no_todo", False):
+        groups = {}
+        for f in a.inputs:
+            for sec in (read_json(Path(f)) or {}).get("sections") or []:
+                for g in sec.get("groups") or []:
+                    if g.get("key"):
+                        groups[g["key"]] = g.get("title") or g["key"]
+        todo_add_groups(srv, slug, groups, owner=a.session or "")
     print(f"page:  {out / 'index.html'}\nurl:   {page_url(srv, slug)}   (tailnet only)\n"
           f"state: {state_file(srv, slug)}")
     print(f"picks: python3 {Path(__file__)} votes {slug} <out_dir> --server {a.server}")
@@ -403,6 +443,7 @@ def cmd_add(a):
         fail(f"{path}: no sections")
     with page_lock(d):
         manifest = load_manifest(d)
+        before = set(manifest["groups"])
         src = d / "src"
         ingest_images(doc, path.parent.resolve(), src)
         titles = admit(doc, path, src, manifest, owner=a.owner or "", ws=ws, fname="")
@@ -410,8 +451,11 @@ def cmd_add(a):
             fail(f"{path}: no questions to add")
         write_json(src / file_for(src, doc, manifest), doc)
         n = rebuild(srv, a.slug, d, manifest, added=titles)
+        new = {k: g.get("title", k) for k, g in manifest["groups"].items() if k not in before}
     print(f"added {len(titles)} question(s) to {a.slug} (version {n}): " + "; ".join(titles))
     print(f"url: {page_url(srv, a.slug)}")
+    if not getattr(a, "no_todo", False):
+        todo_add_groups(srv, a.slug, new, owner=a.owner or "")
 
 
 def migrate_state(srv, slug, fn):
@@ -477,12 +521,19 @@ def cmd_resolve(a):
     with page_lock(d):
         manifest = load_manifest(d)
         g = need_group(manifest, a.group)
+        # Jon's comment and his section note override a plain pick: say them back so the resolver can't miss them
+        # (12 Oct: "cancel this whole task!" sat in a section note while its question was resolved on the pick).
+        for line in jons_words(srv, a.slug, manifest, a.group):
+            print(line)
         manifest["resolved"][a.group] = {"note": a.note.strip(), "at": now_iso(), "from": g["section"]}
         migrate_state(srv, a.slug, mover(a.group, DONE))
         n = rebuild(srv, a.slug, d, manifest, resolved=[g["title"]])
         # A page that was mid-save while this ran may have written the old place back; move it again.
         migrate_state(srv, a.slug, mover(a.group, DONE))
     print(f"resolved {a.group} ({g['title']}) on {a.slug}: moved to Done (version {n})")
+    if not os.environ.get("TODO_FROM_TODO"):
+        todo_hook(srv, "done", f"t-ch-{a.slug}-{a.group}"[:80], "--evidence", f"Answered on the decisions page: {a.note.strip()}"[:200],
+                  "--by", "choices", "--quiet")
 
 
 def cmd_remove(a):
@@ -515,6 +566,10 @@ def cmd_remove(a):
         n = rebuild(srv, a.slug, d, manifest, removed=[g["title"]])
         migrate_state(srv, a.slug, purger(a.group))
     print(f"removed {a.group} ({g['title']}) from {a.slug}: sources, picks and picks.jsonl lines (version {n})")
+    # the question's to-do item goes too, so the list never shows a question that no longer exists (14 Oct)
+    if not os.environ.get("TODO_FROM_TODO"):
+        todo_hook(srv, "drop", f"t-ch-{a.slug}-{a.group}"[:80], "--why", "Question removed from the decisions page",
+                  "--by", "choices", "--quiet")
 
 
 def ballots(state: dict, manifest: dict) -> dict:
@@ -568,9 +623,127 @@ def cmd_list(a):
         status = "; ".join(marks) or "open"
         done = f"  [done: {resolved[k]['note'][:60]}]" if k in resolved else ""
         print(f"  {k:<10} {g['title'][:60]:<60}  {status}{done}  ({g.get('owner') or '-'})")
+    acked = manifest.get("notes_done", {})
     for voter, bv in b.items():
         for sk, note in bv["notes"].items():
-            print(f"  note on {sk}: \"{note[:120]}\"")
+            done = acked.get(sk)
+            if done and done.get("text") == note:
+                if a.all:
+                    print(f"  note on {sk}: \"{note[:120]}\"  [dealt with: {done['reply'][:60]}]")
+                continue
+            print(f"  note on {sk}: \"{note[:120]}\"  (not dealt with yet: `ack {a.slug} {sk} --note ...`)")
+
+
+def jons_words(srv: dict, slug: str, manifest: dict, gkey: str) -> list:
+    """Jon's comment on this question and his note on its section, as lines to print (empty when he left none)."""
+    b = ballots(read_json(state_file(srv, slug)) or {}, manifest)
+    sec = manifest["groups"].get(gkey, {}).get("section")
+    out = []
+    for voter, bv in b.items():
+        row = bv["groups"].get(gkey) or {}
+        if row.get("comment"):
+            out.append(f"  {voter}'s comment on {gkey}: \"{row['comment']}\"")
+        if sec and bv["notes"].get(sec):
+            done = manifest.get("notes_done", {}).get(sec)
+            tag = "" if not done or done.get("text") != bv["notes"][sec] else "  [already dealt with]"
+            out.append(f"  {voter}'s note on section {sec}: \"{bv['notes'][sec]}\"{tag}")
+    if out:
+        out.insert(0, "Before closing, check this was done (a comment or note overrides the pick):")
+    return out
+
+
+def last_pick_at(d: Path) -> dict:
+    """{group or 'n|'+section: latest picks.jsonl time}, from the watcher's log."""
+    out = {}
+    pj = d / "picks.jsonl"
+    if pj.exists():
+        for ln in pj.read_text().splitlines():
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                continue
+            k = r.get("group") or ("n|" + (r.get("section") or ""))
+            if r.get("at"):
+                out[k] = r["at"]
+    return out
+
+
+def age_minutes(iso: str) -> float:
+    try:
+        t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return (datetime.now(t.tzinfo) - t).total_seconds() / 60
+
+
+def waiting_items(srv: dict, slug: str, older: float = 0) -> list:
+    """Everything Jon answered that nobody has acted on yet: picked or commented questions not resolved, and
+    section notes not acked. Any session can act on these, not only the one that asked (15 Oct: Román's
+    'send as drafted' from 12 Oct sat three days because its owner session had gone)."""
+    d = page_dir(srv, slug)
+    manifest = load_manifest(d)
+    b = ballots(read_json(state_file(srv, slug)) or {}, manifest)
+    when = last_pick_at(d)
+    acked = manifest.get("notes_done", {})
+    out = []
+    for voter, bv in b.items():
+        for k, row in bv["groups"].items():
+            if k in manifest["resolved"] or not answered(row):
+                continue
+            g = manifest["groups"][k]
+            at = when.get(k) or bv.get("at", "")
+            if age_minutes(at) < older:
+                continue
+            what = f"picked {shown(row['pick'], g.get('names', {}))}"
+            if row.get("comment"):
+                what += f', comment "{row["comment"][:100]}"'
+            out.append({"kind": "pick", "key": k, "title": g["title"], "what": what, "at": at,
+                        "owner": g.get("owner") or "-", "age_h": round(age_minutes(at) / 60, 1)})
+        for sk, note in bv["notes"].items():
+            done = acked.get(sk)
+            if done and done.get("text") == note:
+                continue
+            at = when.get("n|" + sk) or bv.get("at", "")
+            if age_minutes(at) < older:
+                continue
+            owner = next((g.get("owner") for g in manifest["groups"].values() if g.get("section") == sk), "-")
+            out.append({"kind": "note", "key": sk, "title": f"note on section {sk}", "what": f'"{note[:140]}"',
+                        "at": at, "owner": owner or "-", "age_h": round(age_minutes(at) / 60, 1)})
+    return sorted(out, key=lambda x: x["at"])
+
+
+def cmd_waiting(a):
+    srv = server(a.server)
+    items = waiting_items(srv, a.slug, a.older)
+    if a.json:
+        print(json.dumps(items, indent=1))
+        return
+    if not items:
+        if not a.hook:
+            print(f"{a.slug}: nothing waiting; every pick and note has been acted on")
+        return
+    if a.hook:
+        print(f"<choices-waiting page=\"{a.slug}\">\nJon answered these on the {a.slug} decisions page and nobody has "
+              f"acted on them yet. Whichever session sees this owns them now, whoever asked: act (sends still need "
+              f"his approval of the exact text; a pick of a drafted message is that approval only if the text is "
+              f"still true), then `tailnet.py resolve {a.slug} <key> --note ...` or `ack {a.slug} <section> --note ...`.")
+    for it in items:
+        print(f"  [{it['kind']}] {it['key']}: {it['title'][:60]} | {it['what']} | {it['age_h']}h ago | asked by {it['owner']}")
+    if a.hook:
+        print("</choices-waiting>")
+
+
+def cmd_ack(a):
+    srv, d, manifest = live_page(a)
+    with page_lock(d):
+        manifest = load_manifest(d)
+        b = ballots(read_json(state_file(srv, a.slug)) or {}, manifest)
+        text = next((bv["notes"][a.section] for bv in b.values() if bv["notes"].get(a.section)), None)
+        if text is None:
+            fail(f"no note on section {a.section!r} on {a.slug}")
+        manifest.setdefault("notes_done", {})[a.section] = {"text": text, "reply": a.note.strip(), "at": now_iso()}
+        write_json(d / "live.json", manifest)
+    print(f"acked the note on {a.section}: {a.note.strip()}")
 
 
 def cmd_rebuild(a):
@@ -821,6 +994,7 @@ def main():
     p.add_argument("--server", default="orbital")
     p.add_argument("--owner", help="the decider's display name (default Jon)")
     p.add_argument("--voter", default="jon", help="ballot id for the person picking (solo pages)")
+    p.add_argument("--no-todo", action="store_true", help="don't put the questions on Jon's to-do list (team votes, tests)")
     p.set_defaults(fn=cmd_build)
 
     p = sub.add_parser("add", help="add a section file's questions to a live page")
@@ -829,6 +1003,7 @@ def main():
     p.add_argument("--owner", help="the Claude session adding it (lands in picks.jsonl so it can act)")
     p.add_argument("--ws", help="workspace of these items; must match the page's")
     p.add_argument("--server", default="orbital")
+    p.add_argument("--no-todo", action="store_true", help="don't put the questions on Jon's to-do list")
     p.set_defaults(fn=cmd_add)
 
     p = sub.add_parser("resolve", help="move a question into the page's Done section")
@@ -849,6 +1024,21 @@ def main():
     p.add_argument("--all", action="store_true", help="include Done")
     p.add_argument("--server", default="orbital")
     p.set_defaults(fn=cmd_list)
+
+    p = sub.add_parser("waiting", help="Jon's picks and notes nobody has acted on yet (any owner)")
+    p.add_argument("slug")
+    p.add_argument("--older", type=float, default=0, help="only items answered at least this many minutes ago")
+    p.add_argument("--hook", action="store_true", help="session-start form: silent when nothing is waiting")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--server", default="orbital")
+    p.set_defaults(fn=cmd_waiting)
+
+    p = sub.add_parser("ack", help="mark Jon's note on a section as dealt with")
+    p.add_argument("slug")
+    p.add_argument("section")
+    p.add_argument("--note", required=True, help="what was done about it")
+    p.add_argument("--server", default="orbital")
+    p.set_defaults(fn=cmd_ack)
 
     p = sub.add_parser("rebuild", help="re-render a live page from its sources")
     p.add_argument("slug")
